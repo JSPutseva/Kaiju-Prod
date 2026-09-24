@@ -7,10 +7,17 @@ from app.database import get_db
 from app.models.quarter import Quarter
 from app.models.quarter_resource import QuarterResource
 from app.models.resource_type import ResourceType
+from app.models.role import UserRole
 from app.models.user import User
 from app.schemas import (
+    DisasterLevelOut,
+    DisasterLevelUpdate,
     QuarterOut,
     QuarterResourceOut,
+)
+from app.services.disaster_level import (
+    DISASTER_LEVELS,
+    get_disaster_level_definition,
 )
 from app.services.transfer_validation import retention_min
 
@@ -32,6 +39,67 @@ def get_quarters(
     return db.scalars(
         select(Quarter).order_by(Quarter.id)
     ).all()
+
+
+@router.get(
+    "/disaster-levels",
+    response_model=list[DisasterLevelOut],
+)
+def get_disaster_levels(
+    _current_user: User = Depends(get_current_user),
+):
+    return [
+        DisasterLevelOut(
+            level=level.value,
+            code=definition["code"],
+            name=definition["name"],
+            description=definition["description"],
+        )
+        for level, definition in DISASTER_LEVELS.items()
+    ]
+
+
+@router.patch(
+    "/{quarter_id}/disaster-level",
+    response_model=QuarterOut,
+)
+def update_disaster_level(
+    quarter_id: int,
+    payload: DisasterLevelUpdate,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    if current_user.role != UserRole.CD:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Only the City Director can change the disaster level",
+        )
+
+    quarter = db.get(
+        Quarter,
+        quarter_id,
+    )
+
+    if quarter is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Quarter not found",
+        )
+
+    try:
+        get_disaster_level_definition(payload.level)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="Invalid disaster level",
+        )
+
+    quarter.disaster_level = payload.level
+
+    db.commit()
+    db.refresh(quarter)
+
+    return quarter
 
 
 @router.get(

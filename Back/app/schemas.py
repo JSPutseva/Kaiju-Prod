@@ -27,6 +27,17 @@ class QuarterOut(BaseModel):
     sea_access: bool
 
 
+class DisasterLevelOut(BaseModel):
+    level: int
+    code: str
+    name: str
+    description: str
+
+
+class DisasterLevelUpdate(BaseModel):
+    level: int = Field(ge=1, le=5)
+
+
 class ResourceTypeOut(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
