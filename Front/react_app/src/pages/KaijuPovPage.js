@@ -51,9 +51,14 @@ export default function KaijuPovPage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
-      <div className="mx-auto max-w-3xl px-6 py-8">
-        <div className="mb-6 flex items-center justify-between">
+    <div className="relative flex h-screen flex-col overflow-hidden bg-gray-50 dark:bg-gray-900">
+      <div
+        className="pointer-events-none absolute inset-0 bg-repeat-space opacity-10"
+        style={{ backgroundImage: "url(/jaws_fone.png)", backgroundSize: "120px auto" }}
+        aria-hidden="true"
+      />
+      <div className="relative flex h-full flex-col px-6 py-4">
+        <div className="flex shrink-0 items-center justify-between">
           <h1 className="font-display text-4xl text-gray-900 dark:text-gray-100">Kaiju POV</h1>
           <button
             type="button"
@@ -65,24 +70,27 @@ export default function KaijuPovPage() {
         </div>
 
         {!canPunch && (
-          <p className="mb-4 rounded-md border border-[#FBD98A] bg-[#fff9ea] px-4 py-3 text-center text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
+          <p className="mt-3 shrink-0 rounded-md border border-[#FBD98A] bg-[#fff9ea] px-4 py-2 text-center text-sm text-gray-700 dark:border-gray-700 dark:bg-gray-800 dark:text-gray-300">
             Only a City Director can trigger a disaster level change — you can still see each zone's current level below.
           </p>
         )}
 
-        <p className="mb-4 text-center text-sm text-gray-500 dark:text-gray-400">
-          Click zones on the map to target them, pick a power of punch, then unleash.
+        <p className="mt-3 shrink-0 text-center text-2xl font-bold  text-[#c97900] dark:text-gray-300">
+          Annoyed by stupid people? Punish them!
         </p>
 
-        {quartersStatus === "ready" && (
-          <CityMap
-            selected={targets}
-            onSelect={(id) => canPunch && toggleTarget(id)}
-            levels={levelsByCode}
-          />
-        )}
+        <div className="flex min-h-0 flex-1 items-center justify-center py-2">
+          {quartersStatus === "ready" && (
+            <CityMap
+              className="h-full w-auto max-w-full"
+              selected={targets}
+              onSelect={(id) => canPunch && toggleTarget(id)}
+              levels={levelsByCode}
+            />
+          )}
+        </div>
 
-        <div className="mt-6 flex flex-col items-center gap-4">
+        <div className="flex shrink-0 flex-col items-center gap-2 pb-2">
           <div className="flex min-h-[1.5rem] flex-wrap justify-center gap-3">
             {targets.length === 0 ? (
               <span className="text-sm text-gray-400 dark:text-gray-500">No zones targeted</span>
@@ -100,7 +108,7 @@ export default function KaijuPovPage() {
           </div>
 
           <div>
-            <p className="mb-2 text-center text-sm font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+            <p className="mb-1 text-center text-sm font-bold uppercase tracking-wide text-gray-500 dark:text-gray-400">
               Power of punch
             </p>
             <LevelSwitcher value={punchLevel} onChange={setPunchLevel} />
@@ -117,7 +125,7 @@ export default function KaijuPovPage() {
             type="button"
             disabled={!canPunch || busy || targets.length === 0}
             onClick={handleUnleash}
-            className="rounded-full bg-[#dc2626] px-6 py-3 text-lg font-bold text-white shadow-lg hover:bg-[#b91c1c] disabled:cursor-not-allowed disabled:opacity-50"
+            className="rounded-full bg-[#dc2626] px-6 py-2.5 text-lg font-bold text-white shadow-lg hover:bg-[#b91c1c] disabled:cursor-not-allowed disabled:opacity-50"
           >
             {busy ? "Unleashing…" : "Unleash Kaiju"}
           </button>

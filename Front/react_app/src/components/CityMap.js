@@ -38,7 +38,7 @@ const PIERS = [
 
 // `selected` accepts either a single district id or an array, for pages
 // that need to target more than one zone at once (e.g. the Kaiju POV page)
-export default function CityMap({ selected, onSelect, levels }) {
+export default function CityMap({ selected, onSelect, levels, className = "w-full max-w-2xl mx-auto" }) {
   const { theme } = useTheme();
   const dark = theme === "dark";
   const seaFill = dark ? "#0f2436" : "#BFE3F5";
@@ -54,7 +54,7 @@ export default function CityMap({ selected, onSelect, levels }) {
       viewBox="0 0 100 100"
       role="img"
       aria-label="Map of Tokyork districts"
-      className="w-full max-w-2xl mx-auto"
+      className={className}
     >
       <rect x="0" y="0" width="100" height="100" fill={seaFill} rx="4" />
       {DISTRICTS.map((d) => (

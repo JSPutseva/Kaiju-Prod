@@ -30,6 +30,35 @@ function LevelAlertCard({ alert }) {
   );
 }
 
+function DeniedRequestCard({
+  request,
+  sourceName,
+  sourceCode,
+  destinationName,
+  destinationCode,
+  resourceName,
+  deciderName,
+}) {
+  const { theme } = useTheme();
+  const sourceColor = getDistrictTextColor(sourceCode, theme);
+  const destinationColor = getDistrictTextColor(destinationCode, theme);
+
+  return (
+    <div className="rounded-md border border-gray-200 bg-white p-3 dark:border-gray-700 dark:bg-gray-800">
+      <p className="mb-2 text-base text-[#dc2626] dark:text-red-400">Your request was denied</p>
+      <p className="text-base text-gray-800 dark:text-gray-200">
+        {request.quantity}× <span className="italic">{resourceName}</span>,{" "}
+        <span className="font-bold" style={{ color: sourceColor }}>{sourceName}</span>
+        {" → "}
+        <span className="font-bold" style={{ color: destinationColor }}>{destinationName}</span>
+        <br />
+        denied by <span className="font-bold">{deciderName}</span>
+        {request.rejection_reason && <>: "{request.rejection_reason}"</>}
+      </p>
+    </div>
+  );
+}
+
 function TransferRequestCard({
   request,
   requesterName,
@@ -152,7 +181,7 @@ function TransferRequestCard({
 
 export default function NotificationsPanel() {
   const [calendarOpen, setCalendarOpen] = useState(false);
-  const { roleCode, quarterId } = useCurrentUser();
+  const { roleCode, quarterId, user } = useCurrentUser();
   const { byCode: quarterByCode, status: quartersStatus } = useQuarters();
   // level alerts are captured app-wide in WebSocketContext (not locally
   // here), so one triggered from another page — e.g. the Kaiju POV page —
@@ -160,6 +189,7 @@ export default function NotificationsPanel() {
   const { subscribe, levelAlerts } = useWebSocket();
 
   const [requests, setRequests] = useState([]);
+  const [myDeniedRequests, setMyDeniedRequests] = useState([]);
   const [nameById, setNameById] = useState({});
   const [resourceNameById, setResourceNameById] = useState({});
   const [status, setStatus] = useState("loading"); // loading | ready | error
@@ -183,18 +213,27 @@ export default function NotificationsPanel() {
       });
   }, []);
 
+  // unconditional: GET /requests needs no special role, and "my denied
+  // requests" below applies to anyone who can create a request, not just
+  // roles that can decide on one
   const load = useCallback(() => {
-    if (!canDecide || quartersStatus !== "ready") return;
+    if (quartersStatus !== "ready") return;
 
     setStatus((s) => (s === "ready" ? s : "loading"));
     Promise.all([api.getRequests(), api.getResourceTypes()])
       .then(([reqs, resourceTypes]) => {
-        const actionable = reqs.filter(
-          (r) =>
-            r.status === "PENDING" &&
-            (roleCode === "CD" || r.source_quarter_id === quarterId)
+        const actionable = canDecide
+          ? reqs.filter(
+              (r) =>
+                r.status === "PENDING" &&
+                (roleCode === "CD" || r.source_quarter_id === quarterId)
+            )
+          : [];
+        const myDenied = reqs.filter(
+          (r) => r.status === "REJECTED" && r.requester_id === user?.id
         );
         setRequests(actionable);
+        setMyDeniedRequests(myDenied);
         setResourceNameById(Object.fromEntries(resourceTypes.map((rt) => [rt.id, rt.name])));
         setStatus("ready");
       })
@@ -202,7 +241,7 @@ export default function NotificationsPanel() {
         setError(err.message);
         setStatus("error");
       });
-  }, [canDecide, quartersStatus, roleCode, quarterId]);
+  }, [canDecide, quartersStatus, roleCode, quarterId, user?.id]);
 
   const quarterNameById = Object.fromEntries(
     Object.values(quarterByCode).map((q) => [q.id, q.name])
@@ -232,14 +271,23 @@ export default function NotificationsPanel() {
   };
 
   // one time-sorted feed: pending requests (only for roles that can act on
-  // them) plus attack/level-change alerts (shown to everyone — an attack
-  // affects the whole city, not just whoever can approve a transfer)
+  // them), your own denied requests (any role), and attack/level-change
+  // alerts (shown to everyone — an attack affects the whole city, not just
+  // whoever can approve a transfer)
   const feedItems = [
     ...(canDecide && status === "ready"
       ? requests.map((r) => ({
           kind: "request",
           key: `req-${r.id}`,
           time: new Date(r.created_at).getTime(),
+          request: r,
+        }))
+      : []),
+    ...(status === "ready"
+      ? myDeniedRequests.map((r) => ({
+          kind: "myDenied",
+          key: `denied-${r.id}`,
+          time: new Date(r.decided_at ?? r.updated_at).getTime(),
           request: r,
         }))
       : []),
@@ -270,26 +318,45 @@ export default function NotificationsPanel() {
           aria-hidden="true"
         />
         <div className="relative space-y-2 p-4">
-          {canDecide && status === "loading" && (
+          {status === "loading" && (
             <p className="py-6 text-center text-sm text-gray-500 dark:text-gray-400">Loading…</p>
           )}
 
-          {canDecide && status === "error" && (
+          {status === "error" && (
             <p className="py-6 text-center text-sm text-[#dc2626] dark:text-red-400">
               Couldn't load requests: {error}
             </p>
           )}
 
-          {feedItems.length === 0 && (!canDecide || status === "ready") && (
+          {feedItems.length === 0 && status === "ready" && (
             <p className="py-6 text-center text-sm text-gray-500 dark:text-gray-400">
-              {canDecide ? "Nothing pending." : "No pending decisions for your role."}
+              Nothing to show.
             </p>
           )}
 
-          {feedItems.map((item) =>
-            item.kind === "alert" ? (
-              <LevelAlertCard key={item.key} alert={item.alert} />
-            ) : (
+          {feedItems.map((item) => {
+            if (item.kind === "alert") {
+              return <LevelAlertCard key={item.key} alert={item.alert} />;
+            }
+            if (item.kind === "myDenied") {
+              return (
+                <DeniedRequestCard
+                  key={item.key}
+                  request={item.request}
+                  sourceName={quarterNameById[item.request.source_quarter_id] ?? "?"}
+                  sourceCode={quarterCodeById[item.request.source_quarter_id]}
+                  destinationName={quarterNameById[item.request.destination_quarter_id] ?? "?"}
+                  destinationCode={quarterCodeById[item.request.destination_quarter_id]}
+                  resourceName={resourceNameById[item.request.resource_type_id] ?? "resource"}
+                  deciderName={
+                    item.request.decided_by_id
+                      ? nameById[item.request.decided_by_id] ?? "Someone"
+                      : "Someone"
+                  }
+                />
+              );
+            }
+            return (
               <TransferRequestCard
                 key={item.key}
                 request={item.request}
@@ -310,8 +377,8 @@ export default function NotificationsPanel() {
                 onApprove={handleApprove}
                 onDeny={handleDeny}
               />
-            )
-          )}
+            );
+          })}
         </div>
       </div>
 

@@ -471,6 +471,11 @@ async def deny_request(
         "REQUEST_DENIED",
         {
             "id": request.id,
+            "requester_id": request.requester_id,
+            "source_quarter_id": request.source_quarter_id,
+            "destination_quarter_id": request.destination_quarter_id,
+            "resource_type_id": request.resource_type_id,
+            "quantity": request.quantity,
             "decided_by_id": request.decided_by_id,
             "decided_at": request.decided_at.isoformat(),
             "rejection_reason": request.rejection_reason,
