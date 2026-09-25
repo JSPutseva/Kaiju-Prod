@@ -13,6 +13,7 @@ from app.models.role import UserRole
 from app.models.user import User
 from app.schemas import ReservationCreate, ReservationOut
 from app.services.transfer_validation import retention_min
+from app.websocket.manager import publish_event
 
 
 router = APIRouter(
@@ -26,7 +27,7 @@ router = APIRouter(
     response_model=ReservationOut,
     status_code=status.HTTP_201_CREATED,
 )
-def create_reservation(
+async def create_reservation(
     payload: ReservationCreate,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -94,12 +95,16 @@ def create_reservation(
             },
         )
 
+    # locked so two officers reserving from the same pool at the same moment
+    # serialize instead of both reading stale stock and over-committing it
     resource = db.scalar(
-        select(QuarterResource).where(
+        select(QuarterResource)
+        .where(
             QuarterResource.quarter_id == payload.quarter_id,
             QuarterResource.resource_type_id
             == payload.resource_type_id,
         )
+        .with_for_update()
     )
 
     if resource is None:
@@ -112,6 +117,15 @@ def create_reservation(
         )
 
     if resource.available_quantity < payload.quantity:
+        await publish_event(
+            "RESOURCE_CONFLICT",
+            {
+                "quarter_id": payload.quarter_id,
+                "resource_type_id": payload.resource_type_id,
+                "attempted_by_id": current_user.id,
+                "reason": "INSUFFICIENT_RESOURCE",
+            },
+        )
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
@@ -151,6 +165,18 @@ def create_reservation(
     db.commit()
     db.refresh(reservation)
 
+    await publish_event(
+        "RESOURCE_UPDATE",
+        {
+            "quarter_id": resource.quarter_id,
+            "resource_type_id": resource.resource_type_id,
+            "available_quantity": resource.available_quantity,
+            "reserved_quantity": resource.reserved_quantity,
+            "reason": "RESERVATION_CREATED",
+            "reservation_id": reservation.id,
+        },
+    )
+
     return reservation
 
 
@@ -182,7 +208,7 @@ def get_reservations(
     "/{reservation_id}",
     response_model=ReservationOut,
 )
-def cancel_reservation(
+async def cancel_reservation(
     reservation_id: int,
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
@@ -226,11 +252,13 @@ def cancel_reservation(
         )
 
     resource = db.scalar(
-        select(QuarterResource).where(
+        select(QuarterResource)
+        .where(
             QuarterResource.quarter_id == reservation.quarter_id,
             QuarterResource.resource_type_id
             == reservation.resource_type_id,
         )
+        .with_for_update()
     )
 
     if resource is None:
@@ -249,5 +277,17 @@ def cancel_reservation(
 
     db.commit()
     db.refresh(reservation)
+
+    await publish_event(
+        "RESOURCE_UPDATE",
+        {
+            "quarter_id": resource.quarter_id,
+            "resource_type_id": resource.resource_type_id,
+            "available_quantity": resource.available_quantity,
+            "reserved_quantity": resource.reserved_quantity,
+            "reason": "RESERVATION_CANCELLED",
+            "reservation_id": reservation.id,
+        },
+    )
 
     return reservation

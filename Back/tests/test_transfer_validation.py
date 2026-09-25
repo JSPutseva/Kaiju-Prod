@@ -137,7 +137,8 @@ def test_l4_non_adjacent_transfer_allowed(validator):
     assert result.reason == ValidationReason.ALLOWED
 
 
-def test_l5_uses_15_percent_retention(validator):
+def test_l5_still_defaults_to_30_percent_retention_without_override(validator):
+    # only a CD-invoked override drops the floor to 15% — it's not automatic
     result = validator.validate(
         user_role=UserRole.CD,
         source_quarter="Apex",
@@ -148,8 +149,59 @@ def test_l5_uses_15_percent_retention(validator):
         available_quantity=12,
     )
 
+    assert not result.allowed
+    assert result.reason == ValidationReason.RETENTION_LIMIT
+
+
+def test_l5_cd_can_invoke_15_percent_retention_override(validator):
+    result = validator.validate(
+        user_role=UserRole.CD,
+        source_quarter="Apex",
+        destination_quarter="Zion",
+        disaster_level=5,
+        quantity=10,
+        initial_quantity=12,
+        available_quantity=12,
+        retention_override=True,
+    )
+
     assert result.allowed
     assert result.reason == ValidationReason.ALLOWED
+
+
+def test_retention_override_rejected_for_non_cd(validator):
+    result = validator.validate(
+        user_role=UserRole.LC,
+        source_quarter="Apex",
+        destination_quarter="Zion",
+        disaster_level=5,
+        quantity=10,
+        initial_quantity=12,
+        available_quantity=12,
+        retention_override=True,
+    )
+
+    assert not result.allowed
+    assert result.reason == ValidationReason.PERMISSION_DENIED
+
+
+def test_retention_override_rejected_below_level_5(validator):
+    # requisition is the only route a CD passes at level 4, isolating the
+    # retention-override level check from the route permission check
+    result = validator.validate(
+        user_role=UserRole.CD,
+        source_quarter="Apex",
+        destination_quarter="Echo",
+        disaster_level=4,
+        quantity=1,
+        initial_quantity=12,
+        available_quantity=12,
+        requisition=True,
+        retention_override=True,
+    )
+
+    assert not result.allowed
+    assert result.reason == ValidationReason.PERMISSION_DENIED
 
 
 def test_sea_is_not_a_quarter(validator):
@@ -264,6 +316,146 @@ def test_l4_adjacent_surplus_takes_priority(validator):
 
     assert not result.allowed
     assert result.reason == ValidationReason.ADJACENT_SURPLUS_AVAILABLE
+
+
+def test_requisition_allowed_for_cd_at_level_4(validator):
+    result = validator.validate(
+        user_role=UserRole.CD,
+        source_quarter="Apex",
+        destination_quarter="Zion",
+        disaster_level=4,
+        quantity=1,
+        initial_quantity=12,
+        available_quantity=12,
+        requisition=True,
+    )
+
+    assert result.allowed
+    assert result.route_type == "requisition"
+
+
+def test_requisition_rejected_for_non_cd(validator):
+    result = validator.validate(
+        user_role=UserRole.LC,
+        source_quarter="Apex",
+        destination_quarter="Zion",
+        disaster_level=4,
+        quantity=1,
+        initial_quantity=12,
+        available_quantity=12,
+        requisition=True,
+    )
+
+    assert not result.allowed
+    assert result.reason == ValidationReason.PERMISSION_DENIED
+
+
+def test_requisition_rejected_below_level_4(validator):
+    result = validator.validate(
+        user_role=UserRole.CD,
+        source_quarter="Apex",
+        destination_quarter="Zion",
+        disaster_level=3,
+        quantity=1,
+        initial_quantity=12,
+        available_quantity=12,
+        requisition=True,
+    )
+
+    assert not result.allowed
+    assert result.reason == ValidationReason.DISASTER_LEVEL_TOO_LOW
+
+
+def test_requisition_ignores_adjacency(validator):
+    # Apex and Zion aren't adjacent, but requisition bypasses routing rules
+    result = validator.validate(
+        user_role=UserRole.CD,
+        source_quarter="Apex",
+        destination_quarter="Zion",
+        disaster_level=4,
+        quantity=1,
+        initial_quantity=12,
+        available_quantity=12,
+        requisition=True,
+        adjacent_surplus={"Warden": 999},
+    )
+
+    assert result.allowed
+    assert result.transit_via is None
+
+
+def test_qc_cannot_organize_transit_at_level_4(validator):
+    result = validator.validate(
+        user_role=UserRole.QC,
+        source_quarter="Apex",
+        destination_quarter="Zion",
+        disaster_level=4,
+        quantity=1,
+        initial_quantity=12,
+        available_quantity=12,
+    )
+
+    assert not result.allowed
+    assert result.reason == ValidationReason.PERMISSION_DENIED
+
+
+def test_lc_cannot_organize_transit_at_level_5_is_actually_allowed(validator):
+    # LC keeps transit access at level 5 (matrix: LC, CD)
+    result = validator.validate(
+        user_role=UserRole.LC,
+        source_quarter="Apex",
+        destination_quarter="Zion",
+        disaster_level=5,
+        quantity=1,
+        initial_quantity=12,
+        available_quantity=12,
+    )
+
+    assert result.allowed
+
+
+def test_cd_cannot_organize_transit_at_level_4(validator):
+    result = validator.validate(
+        user_role=UserRole.CD,
+        source_quarter="Apex",
+        destination_quarter="Zion",
+        disaster_level=4,
+        quantity=1,
+        initial_quantity=12,
+        available_quantity=12,
+    )
+
+    assert not result.allowed
+    assert result.reason == ValidationReason.PERMISSION_DENIED
+
+
+def test_cd_can_organize_transit_at_level_5(validator):
+    result = validator.validate(
+        user_role=UserRole.CD,
+        source_quarter="Apex",
+        destination_quarter="Zion",
+        disaster_level=5,
+        quantity=1,
+        initial_quantity=12,
+        available_quantity=12,
+    )
+
+    assert result.allowed
+
+
+def test_any_role_can_request_direct_transfer_at_level_5(validator):
+    result = validator.validate(
+        user_role=UserRole.CD,
+        source_quarter="Apex",
+        destination_quarter="Echo",
+        disaster_level=5,
+        quantity=1,
+        initial_quantity=12,
+        available_quantity=12,
+    )
+
+    assert result.allowed
+    assert result.route_type == "direct"
 
 
 def test_direct_adjacent_transfer_has_no_transit(validator):

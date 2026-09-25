@@ -1,5 +1,8 @@
+import { useNavigate } from "react-router-dom";
 import { useState } from "react";
-import { useDisasterLevel } from "../context/DisasterLevelContext";
+import { LEVELS } from "../context/DisasterLevelContext";
+import { useCurrentUser } from "../context/CurrentUserContext";
+import { useQuarters } from "../context/QuartersContext";
 import Header from "../components/Header";
 import NotificationsPanel from "../components/NotificationsPanel";
 import Navigation from "../components/Navigation";
@@ -11,7 +14,9 @@ import ReserveModal from "../components/ReserveModal";
 import ManageRolesModal from "../components/ManageRolesModal";
 
 export default function Dashboard() {
-  const { level, levelName, setLevel } = useDisasterLevel();
+  const navigate = useNavigate();
+  const { roleCode } = useCurrentUser();
+  const { byCode: quarterByCode, status: quartersStatus } = useQuarters();
   const [menu, setMenu] = useState(null); // { districtId, anchor: { x, top, bottom } }
   const [activeFlow, setActiveFlow] = useState(null); // { type, districtId }
   const [manageRolesOpen, setManageRolesOpen] = useState(false);
@@ -33,6 +38,17 @@ export default function Dashboard() {
 
   const closeFlow = () => setActiveFlow(null);
 
+  const levelsByCode = Object.fromEntries(
+    Object.entries(quarterByCode).map(([code, q]) => [code, q.disaster_level])
+  );
+  // city status badge shows the worst-hit zone's level, since each zone now
+  // has its own real level (see the Kaiju POV page)
+  const worstLevel =
+    quartersStatus === "ready"
+      ? Math.max(1, ...Object.values(levelsByCode))
+      : 1;
+  const worstLevelName = LEVELS.find((l) => l.level === worstLevel)?.name ?? "Watch";
+
   return (
     <div className="min-h-screen bg-gray-50 dark:bg-gray-900">
       <Header />
@@ -42,13 +58,14 @@ export default function Dashboard() {
 
         <section className="relative text-center">
           <span
-            className={`absolute left-1/2 top-0 z-10 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-full border-2 border-white px-4 py-1.5 text-sm font-bold text-white shadow bg-level-${levelName.toLowerCase()}`}
+            className={`absolute left-1/2 top-0 z-10 -translate-x-1/2 -translate-y-1/2 whitespace-nowrap rounded-full border-2 border-white px-4 py-1.5 text-sm font-bold text-white shadow bg-level-${worstLevelName.toLowerCase()}`}
           >
-            current level: {levelName}
+            current level: {worstLevelName}
           </span>
           <CityMap
             selected={menu?.districtId ?? activeFlow?.districtId ?? null}
             onSelect={openMenuFor}
+            levels={levelsByCode}
           />
         </section>
 
@@ -89,24 +106,15 @@ export default function Dashboard() {
         <ManageRolesModal onClose={() => setManageRolesOpen(false)} />
       )}
 
-      {/* Prototype-only control: real level state will come from the
-          teammate's disaster-level system. */}
-      <div className="fixed bottom-3 right-3 flex items-center gap-3 rounded-md bg-white/90 px-2 py-1 text-sm text-gray-500 shadow dark:bg-gray-800/90 dark:text-gray-400">
-        <label className="flex items-center gap-1">
-          dev level
-          <select
-            value={level}
-            onChange={(e) => setLevel(Number(e.target.value))}
-            className="rounded border border-gray-300 bg-white text-sm dark:border-gray-600 dark:bg-gray-700 dark:text-gray-200"
-          >
-            {[1, 2, 3, 4, 5].map((l) => (
-              <option key={l} value={l}>
-                {l}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
+      {roleCode === "CD" && (
+        <button
+          type="button"
+          onClick={() => navigate("/kaiju-pov")}
+          className="fixed bottom-4 left-1/2 -translate-x-1/2 rounded-full bg-[#F47E00] dark:bg-[#F8A201] px-4 py-2 text-sm font-bold text-white shadow-lg hover:bg-[#D98C00]"
+        >
+          Kaiju POV
+        </button>
+      )}
     </div>
   );
 }

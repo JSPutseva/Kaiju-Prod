@@ -18,6 +18,15 @@ const SHAPES = {
   Z: "41,66 50,62 58,60 66,58 74,56 82,55 90,54 93,60 90,66 94,71 90,77 93,83 88,88 90,93 82,95 74,93 66,95 58,93 50,94 44,91 40,85 42,78 39,72",
 };
 
+// matches tailwind.config.js's level.* colors
+const LEVEL_COLORS = {
+  1: "#6B7280",
+  2: "#EAB308",
+  3: "#F97316",
+  4: "#DC2626",
+  5: "#B91C1C",
+};
+
 // decorative piers (not clickable)
 const PIERS = [
   { points: "84,38 88,37 88,39.5 84,40.5" },
@@ -27,12 +36,18 @@ const PIERS = [
   { points: "68,92 75,90.5 75,93 68,94.5" },
 ];
 
-export default function CityMap({ selected, onSelect }) {
+// `selected` accepts either a single district id or an array, for pages
+// that need to target more than one zone at once (e.g. the Kaiju POV page)
+export default function CityMap({ selected, onSelect, levels }) {
   const { theme } = useTheme();
   const dark = theme === "dark";
   const seaFill = dark ? "#0f2436" : "#BFE3F5";
   const pierFill = dark ? "#2d5170" : "#8FB9CF";
   const outline = dark ? "#e5e7eb" : "#111827";
+  const badgeText = dark ? "#111827" : "#ffffff";
+
+  const isSelected = (id) =>
+    Array.isArray(selected) ? selected.includes(id) : selected === id;
 
   return (
     <svg
@@ -48,7 +63,7 @@ export default function CityMap({ selected, onSelect }) {
           points={SHAPES[d.id]}
           fill={FILL[d.color]}
           stroke={outline}
-          strokeWidth={selected === d.id ? 1.6 : 0.6}
+          strokeWidth={isSelected(d.id) ? 1.6 : 0.6}
           strokeLinejoin="round"
           onClick={(e) => onSelect?.(d.id, e)}
           className="cursor-pointer transition-opacity hover:opacity-80"
@@ -78,6 +93,30 @@ export default function CityMap({ selected, onSelect }) {
           </text>
         );
       })}
+      {levels &&
+        DISTRICTS.map((d) => {
+          const level = levels[d.id];
+          if (!level) return null;
+          const points = SHAPES[d.id].split(" ").map((p) => p.split(",").map(Number));
+          const cx = points.reduce((s, p) => s + p[0], 0) / points.length;
+          const cy = points.reduce((s, p) => s + p[1], 0) / points.length;
+          return (
+            <g key={`level-${d.id}`} className="pointer-events-none">
+              <circle cx={cx + 8} cy={cy - 8} r="5" fill={LEVEL_COLORS[level] ?? LEVEL_COLORS[1]} stroke={outline} strokeWidth="0.4" />
+              <text
+                x={cx + 8}
+                y={cy - 8}
+                textAnchor="middle"
+                dominantBaseline="middle"
+                fontSize="6"
+                fontWeight="700"
+                fill={badgeText}
+              >
+                {level}
+              </text>
+            </g>
+          );
+        })}
     </svg>
   );
 }

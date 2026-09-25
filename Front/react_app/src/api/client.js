@@ -84,6 +84,14 @@ export const api = {
   getQuarterResources: (quarterId) =>
     request(`/quarters/${quarterId}/resources`),
 
+  setDisasterLevel: (quarterIds, level) =>
+    request("/quarters/disaster-level", {
+      method: "PATCH",
+      body: JSON.stringify({ quarter_ids: quarterIds, level }),
+    }),
+
+  getDisasterLevelEvents: () => request("/quarters/disaster-level-events"),
+
   routeTransfer: (payload) =>
     request("/transfers/route", {
       method: "POST",
@@ -101,4 +109,19 @@ export const api = {
       method: "POST",
       body: JSON.stringify(payload),
     }),
+
+  getRequests: () => request("/requests"),
+
+  approveRequest: (requestId) =>
+    request(`/requests/${requestId}/approve`, { method: "PATCH" }),
+
+  denyRequest: (requestId, reason) =>
+    request(`/requests/${requestId}/deny`, {
+      method: "PATCH",
+      body: JSON.stringify({ reason }),
+    }),
+
+  getReservations: () => request("/reservations"),
+
+  getResourceTypes: () => request("/resource-types"),
 };

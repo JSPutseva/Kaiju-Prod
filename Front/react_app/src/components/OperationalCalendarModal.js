@@ -1,7 +1,11 @@
-import { useEffect } from "react";
-import { CALENDAR_EVENTS, EVENT_TYPES } from "../data/calendarEvents";
+import { useEffect, useState } from "react";
+import { EVENT_TYPES } from "../data/calendarEvents";
 import { COLORS } from "../data/colors";
 import { useTheme } from "../context/ThemeContext";
+import { useQuarters } from "../context/QuartersContext";
+import { useWebSocket } from "../context/WebSocketContext";
+import { LEVEL_NAMES } from "../context/DisasterLevelContext";
+import { api } from "../api/client";
 
 const UNIT = 24;
 // stem heights, alternating so labels don't collide
@@ -16,6 +20,23 @@ function formatDate(iso) {
 
 export default function OperationalCalendarModal({ onClose }) {
   const { theme } = useTheme();
+  const { byCode: quarterByCode, status: quartersStatus } = useQuarters();
+  // level alerts are captured app-wide in WebSocketContext (not locally
+  // here), so one triggered while this modal wasn't open — e.g. from the
+  // Kaiju POV page — still shows up once you open it
+  const { subscribe, levelAlerts } = useWebSocket();
+
+  const [events, setEvents] = useState([]);
+  const [status, setStatus] = useState("loading"); // loading | ready | error
+  const [error, setError] = useState(null);
+  // lifted out of the loader effect below so the level-alert mapping (which
+  // isn't tied to that fetch) can resolve names too
+  const [nameById, setNameById] = useState({});
+
+  const quarterNameById = Object.fromEntries(
+    Object.values(quarterByCode).map((q) => [q.id, q.name])
+  );
+
   const axisColor = theme === "dark" ? "#4B5563" : "#D1D5DB";
   const dateTextColor = theme === "dark" ? "#9CA3AF" : "#6B7280";
   // transfer dot uses the site's primary color, which differs per theme
@@ -31,7 +52,157 @@ export default function OperationalCalendarModal({ onClose }) {
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [onClose]);
 
-  const width = PAD_X * 2 + (CALENDAR_EVENTS.length - 1) * STEP_X;
+  useEffect(() => {
+    if (quartersStatus !== "ready") return;
+
+    let cancelled = false;
+
+    const load = () => {
+      setStatus((s) => (s === "ready" ? s : "loading"));
+      Promise.all([
+        api.getRequests(),
+        api.getReservations(),
+        api.getResourceTypes(),
+        api.listUsers(),
+      ])
+        .then(([requests, reservations, resourceTypes, users]) => {
+          if (cancelled) return;
+
+          const resourceNameById = Object.fromEntries(
+            resourceTypes.map((rt) => [rt.id, rt.name])
+          );
+          const nameById = Object.fromEntries(users.map((u) => [u.id, u.name]));
+          setNameById(nameById);
+
+          const REQUEST_VERBS = {
+            PENDING: "requested",
+            APPROVED: "approved",
+            REJECTED: "denied",
+            CANCELLED: "cancelled",
+            COMPLETED: "completed",
+          };
+
+          const requestEvents = requests.map((r) => {
+            const sourceName = quarterNameById[r.source_quarter_id] ?? "?";
+            const destName = quarterNameById[r.destination_quarter_id] ?? "?";
+            const resourceName = resourceNameById[r.resource_type_id] ?? "resource";
+            const requesterName = nameById[r.requester_id] ?? "Someone";
+            const deciderName = r.decided_by_id ? nameById[r.decided_by_id] ?? "Someone" : null;
+            const verb = REQUEST_VERBS[r.status] ?? r.status.toLowerCase();
+            const actorName = deciderName ?? requesterName;
+            const viaName = r.transit_via_id ? quarterNameById[r.transit_via_id] : null;
+            const viaSuffix = viaName ? ` via ${viaName}` : "";
+
+            const tooltipLines = [
+              `${r.requisition ? "Requisition" : "Transfer"} request: ${sourceName} → ${destName}${viaSuffix}`,
+              `${resourceName} × ${r.quantity}`,
+              `Requested by ${requesterName} on ${new Date(r.created_at).toLocaleString()}`,
+            ];
+            if (deciderName) {
+              tooltipLines.push(
+                `${r.status === "REJECTED" ? "Denied" : "Approved"} by ${deciderName} on ${new Date(
+                  r.decided_at
+                ).toLocaleString()}`
+              );
+            }
+            if (r.status === "REJECTED" && r.rejection_reason) {
+              tooltipLines.push(`Reason: ${r.rejection_reason}`);
+            }
+
+            return {
+              id: `req-${r.id}`,
+              date: r.created_at,
+              type: r.requisition ? "requisition" : "transfer",
+              label: `${actorName} ${verb}: ${sourceName} → ${destName}${viaSuffix} (${resourceName})`,
+              tooltip: tooltipLines.join("\n"),
+            };
+          });
+
+          const RESERVATION_VERBS = {
+            PENDING: "requested",
+            APPROVED: "approved",
+            CANCELLED: "cancelled",
+            COMPLETED: "completed",
+          };
+
+          const reservationEvents = reservations.map((r) => {
+            const quarterName = quarterNameById[r.quarter_id] ?? "?";
+            const resourceName = resourceNameById[r.resource_type_id] ?? "resource";
+            const userName = nameById[r.user_id] ?? "Someone";
+            const verb = RESERVATION_VERBS[r.status] ?? r.status.toLowerCase();
+
+            return {
+              id: `res-${r.id}`,
+              date: r.created_at,
+              type: "reservation",
+              label: `${userName} ${verb} reservation: ${quarterName} (${resourceName})`,
+              tooltip: [
+                `Reservation: ${quarterName}, ${resourceName} × ${r.quantity}`,
+                `Requested by ${userName} on ${new Date(r.created_at).toLocaleString()}`,
+                `Status: ${r.status}`,
+              ].join("\n"),
+            };
+          });
+
+          const merged = [...requestEvents, ...reservationEvents].sort(
+            (a, b) => new Date(a.date) - new Date(b.date)
+          );
+
+          setEvents(merged);
+          setStatus("ready");
+        })
+        .catch((err) => {
+          if (cancelled) return;
+          setError(err.message);
+          setStatus("error");
+        });
+    };
+
+    load();
+
+    // live refresh: refetch whenever a request is created or decided, or a
+    // reservation-driven resource change is broadcast (level changes are
+    // handled separately below, from the app-wide WebSocketContext state)
+    const unsubscribe = subscribe((event) => {
+      if (
+        ["REQUEST_CREATED", "REQUEST_APPROVED", "REQUEST_DENIED", "RESOURCE_UPDATE"].includes(
+          event.type
+        )
+      ) {
+        load();
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [quartersStatus, subscribe]);
+
+  const levelChangeEvents = levelAlerts.map((a) => {
+    const quarterName = quarterNameById[a.quarter_id] ?? "?";
+    const levelName = LEVEL_NAMES[a.level] ?? a.level;
+    const changedByName = a.changed_by_id ? nameById[a.changed_by_id] ?? "Someone" : null;
+    return {
+      id: a.id,
+      date: new Date(a.timestamp).toISOString(),
+      type: "levelChange",
+      label: `${quarterName} → Level ${a.level} (${levelName})`,
+      tooltip: [
+        `${quarterName} disaster level changed to ${levelName}`,
+        changedByName ? `By ${changedByName} on ${new Date(a.timestamp).toLocaleString()}` : null,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    };
+  });
+
+  const allEvents = [...events, ...levelChangeEvents].sort(
+    (a, b) => new Date(a.date) - new Date(b.date)
+  );
+
+  const width = Math.max(PAD_X * 2, PAD_X * 2 + (allEvents.length - 1) * STEP_X);
 
   return (
     <div
@@ -66,47 +237,66 @@ export default function OperationalCalendarModal({ onClose }) {
           ))}
         </div>
 
-        <div className="overflow-x-auto">
-          <svg viewBox={`0 0 ${width} 300`} width={width} height="300" role="img" aria-label="Timeline of operational events">
-            <line x1={PAD_X - 20} y1={AXIS_Y} x2={width - PAD_X + 20} y2={AXIS_Y} stroke={axisColor} strokeWidth="1.5" />
+        {status === "loading" && (
+          <p className="py-10 text-center text-sm text-gray-500 dark:text-gray-400">
+            Loading operational history…
+          </p>
+        )}
+        {status === "error" && (
+          <p className="py-10 text-center text-sm text-[#dc2626] dark:text-red-400">
+            Couldn't load the operational calendar: {error}
+          </p>
+        )}
+        {status === "ready" && allEvents.length === 0 && (
+          <p className="py-10 text-center text-sm text-gray-500 dark:text-gray-400">
+            No transfers, requisitions or reservations yet.
+          </p>
+        )}
 
-            {CALENDAR_EVENTS.map((event, i) => {
-              const x = PAD_X + i * STEP_X;
-              const level = LEVELS[i % LEVELS.length];
-              const tipY = AXIS_Y - level * UNIT;
-              const meta = eventTypes[event.type];
-              const colorHex = meta.dot ?? "#111827";
-              const above = level > 0;
+        {status === "ready" && allEvents.length > 0 && (
+          <div className="overflow-x-auto">
+            <svg viewBox={`0 0 ${width} 300`} width={width} height="300" role="img" aria-label="Timeline of operational events">
+              <line x1={PAD_X - 20} y1={AXIS_Y} x2={width - PAD_X + 20} y2={AXIS_Y} stroke={axisColor} strokeWidth="1.5" />
 
-              return (
-                <g key={event.id}>
-                  <line x1={x} y1={AXIS_Y} x2={x} y2={tipY} stroke={colorHex} strokeWidth="1.5" />
-                  <circle cx={x} cy={AXIS_Y} r="3" fill={colorHex} />
-                  <text
-                    x={x}
-                    y={above ? tipY - 6 : tipY + 6}
-                    textAnchor="middle"
-                    dominantBaseline={above ? "baseline" : "hanging"}
-                    fontSize="13"
-                    fontWeight="600"
-                    fill={colorHex}
-                  >
-                    {event.label}
-                  </text>
-                  <text
-                    x={x}
-                    y={AXIS_Y + 18}
-                    textAnchor="middle"
-                    fontSize="12"
-                    fill={dateTextColor}
-                  >
-                    {formatDate(event.date)}
-                  </text>
-                </g>
-              );
-            })}
-          </svg>
-        </div>
+              {allEvents.map((event, i) => {
+                const x = PAD_X + i * STEP_X;
+                const level = LEVELS[i % LEVELS.length];
+                const tipY = AXIS_Y - level * UNIT;
+                const meta = eventTypes[event.type];
+                const colorHex = meta?.dot ?? "#111827";
+                const above = level > 0;
+
+                return (
+                  <g key={event.id}>
+                    {event.tooltip && <title>{event.tooltip}</title>}
+                    <line x1={x} y1={AXIS_Y} x2={x} y2={tipY} stroke={colorHex} strokeWidth="1.5" />
+                    <circle cx={x} cy={AXIS_Y} r="3" fill={colorHex} />
+                    <text
+                      x={x}
+                      y={above ? tipY - 6 : tipY + 6}
+                      textAnchor="middle"
+                      dominantBaseline={above ? "baseline" : "hanging"}
+                      fontSize="13"
+                      fontWeight="600"
+                      fill={colorHex}
+                    >
+                      {event.label}
+                    </text>
+                    <text
+                      x={x}
+                      y={AXIS_Y + 18}
+                      textAnchor="middle"
+                      fontSize="12"
+                      fill={dateTextColor}
+                    >
+                      {formatDate(event.date)}
+                    </text>
+                  </g>
+                );
+              })}
+            </svg>
+          </div>
+        )}
       </div>
     </div>
   );

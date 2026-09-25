@@ -13,6 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.auth.router import router as auth_router
 # import every model so Base.metadata has all tables registered
 from app.models import (  # noqa: F401
+    disaster_level_event,
     quarter,
     quarter_connection,
     quarter_resource,
@@ -23,7 +24,7 @@ from app.models import (  # noqa: F401
     user,
     user_quarter,
 )
-from app.routers import quarters, transfers, users, requests, reservations, websocket
+from app.routers import quarters, transfers, users, requests, reservations, resource_types, websocket
 
 app = FastAPI(title="KAIJU Crisis Manager API")
 
@@ -43,6 +44,7 @@ app.include_router(transfers.router)
 app.include_router(users.router)
 app.include_router(requests.router)
 app.include_router(reservations.router)
+app.include_router(resource_types.router)
 app.include_router(websocket.router)
 
 

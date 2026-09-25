@@ -2,6 +2,7 @@ import { useNavigate } from "react-router-dom";
 import { useDisasterLevel } from "../context/DisasterLevelContext";
 import { useCurrentUser } from "../context/CurrentUserContext";
 import { useTheme } from "../context/ThemeContext";
+import { useWebSocket } from "../context/WebSocketContext";
 import { getRole } from "../data/roles";
 
 function SpeakerIcon({ muted }) {
@@ -51,6 +52,7 @@ export default function Header() {
   const { level, muted, toggleMuted } = useDisasterLevel();
   const { name, roleCode, logout } = useCurrentUser();
   const { theme, toggleTheme } = useTheme();
+  const { connected } = useWebSocket();
   const role = getRole(roleCode);
 
   const handleLogout = () => {
@@ -75,6 +77,16 @@ export default function Header() {
           }`}
         >
           !Alert
+        </span>
+        <span
+          className="ml-1 flex items-center gap-1 text-xs text-gray-400 dark:text-gray-500"
+          title={connected ? "Live updates connected" : "Live updates disconnected"}
+        >
+          <span
+            className={`h-2 w-2 rounded-full ${connected ? "bg-green-500" : "bg-gray-300 dark:bg-gray-600"}`}
+            aria-hidden="true"
+          />
+          {connected ? "live" : "offline"}
         </span>
       </div>
 

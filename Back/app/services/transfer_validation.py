@@ -23,6 +23,7 @@ class ValidationReason(str, Enum):
     RETENTION_LIMIT = "RETENTION_LIMIT"
 
     QC_APPROVAL_REQUIRED = "QC_APPROVAL_REQUIRED"
+    PERMISSION_DENIED = "PERMISSION_DENIED"
 
 
 # retention floor: 30% of initial, rounded up (15% for CD at level 5)
@@ -88,6 +89,8 @@ class TransferValidator:
         qc_approved: bool = False,
         lc_approved: bool = False,
         cd_approved: bool = False,
+        requisition: bool = False,
+        retention_override: bool = False,
     ) -> TransferValidationResult:
 
         # -------------------------
@@ -167,7 +170,21 @@ class TransferValidator:
         transit_via_result: str | None = None
         deprioritized_behind_xeno = False
 
-        if maritime:
+        if requisition:
+            # CD can command resources city-wide, bypassing adjacency and
+            # transit entirely — but only from disaster level 4 up.
+            if user_role != UserRole.CD:
+                return self._reject(
+                    ValidationReason.PERMISSION_DENIED,
+                    "Only a City Director can requisition resources.",
+                )
+            if disaster_level < 4:
+                return self._reject(
+                    ValidationReason.DISASTER_LEVEL_TOO_LOW,
+                    "Requisitioning requires at least disaster level 4.",
+                )
+            route_type = "requisition"
+        elif maritime:
             # Only Echo, Xeno and Zion have sea access.
             if (
                 source_quarter not in self.MARITIME_QUARTERS
@@ -235,16 +252,31 @@ class TransferValidator:
                 deprioritized_behind_xeno = transit_via_result == "Xeno"
 
         # -------------------------
+        # Role permission matrix
+        # -------------------------
+
+        if not self._route_permission_ok(user_role, route_type, disaster_level):
+            action = "organize a transit chain" if route_type == "transit" else "request this transfer"
+            return self._reject(
+                ValidationReason.PERMISSION_DENIED,
+                f"{user_role.value} can't {action} at disaster level {disaster_level}.",
+            )
+
+        # -------------------------
         # Retention rule
         # -------------------------
 
-        # Normal threshold: 30%.
-        # L5 CD override: 15%.
-        retention_percentage = (
-            0.15
-            if disaster_level == 5
-            else 0.30
-        )
+        # Normal threshold: 30%. CD can drop it to 15%, level 5 only.
+        if retention_override:
+            if user_role != UserRole.CD or disaster_level != 5:
+                return self._reject(
+                    ValidationReason.PERMISSION_DENIED,
+                    "Only a City Director can lower the retention threshold, "
+                    "and only at disaster level 5.",
+                )
+            retention_percentage = 0.15
+        else:
+            retention_percentage = 0.30
 
         minimum_retention = retention_min(
             initial_quantity,
@@ -271,23 +303,6 @@ class TransferValidator:
                 "A Quarter Coordinator must approve this transfer.",
             )
 
-        # -------------------------
-        # L4/L5
-        # -------------------------
-
-        # L4:
-        # - Adjacent transfers are allowed.
-        # - Extended/transit transfers are allowed.
-        # - LC organizes transit chains.
-        # - CD can requisition resources.
-        #
-        # L5:
-        # - All transfers are unlocked.
-        # - CD may reduce retention to 15%.
-        #
-        # Specific role permissions are enforced by the
-        # authorization layer, not by this validation service.
-        #
         # Both the destination (and the transit quarter, if any) still need
         # to give their own consent before the transfer actually happens —
         # this result only says the route itself is valid.
@@ -299,6 +314,31 @@ class TransferValidator:
             transit_via=transit_via_result,
             deprioritized_behind_xeno=deprioritized_behind_xeno,
         )
+
+    @classmethod
+    def _route_permission_ok(
+        cls,
+        user_role: UserRole,
+        route_type: str | None,
+        disaster_level: int,
+    ) -> bool:
+        # requisition has its own role/level check earlier and never
+        # reaches this gate.
+        if route_type in ("direct", "maritime"):
+            if disaster_level == 3:
+                return user_role == UserRole.QC
+            if disaster_level == 4:
+                return user_role in (UserRole.QC, UserRole.LC)
+            return True  # level 5: any role
+
+        if route_type == "transit":
+            if disaster_level == 4:
+                return user_role == UserRole.LC
+            if disaster_level == 5:
+                return user_role in (UserRole.LC, UserRole.CD)
+            return False  # transit doesn't exist below level 4
+
+        return True
 
     @classmethod
     def neighbors(cls, quarter: str) -> set[str]:

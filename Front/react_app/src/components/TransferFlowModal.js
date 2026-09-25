@@ -17,6 +17,7 @@ const REASON_LABELS = {
   INSUFFICIENT_AVAILABLE_RESOURCE: "Insufficient stock",
   RETENTION_LIMIT: "Retention rule",
   QC_APPROVAL_REQUIRED: "Approval rule",
+  PERMISSION_DENIED: "Permission rule",
 };
 
 const ROUTES = [

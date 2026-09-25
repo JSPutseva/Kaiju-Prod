@@ -52,10 +52,13 @@ def route_transfer(
             raise HTTPException(status_code=404, detail="Unknown transit quarter.")
         transit_via_name = transit_quarter.name
 
-    # surplus of quarters adjacent to the destination, by name
-    neighbor_names = TransferValidator.neighbors(destination.name)
-    neighbor_ids = {q.id: q.name for q in quarters.values() if q.name in neighbor_names}
+    # surplus of quarters adjacent to the destination, by name — irrelevant
+    # for a requisition, which bypasses adjacency entirely
     adjacent_surplus = {}
+    neighbor_ids = {}
+    if not payload.requisition:
+        neighbor_names = TransferValidator.neighbors(destination.name)
+        neighbor_ids = {q.id: q.name for q in quarters.values() if q.name in neighbor_names}
     if neighbor_ids:
         rows = (
             db.query(QuarterResource)
@@ -86,6 +89,8 @@ def route_transfer(
         maritime=payload.prefer_maritime,
         transit_via=transit_via_name,
         adjacent_surplus=adjacent_surplus,
+        requisition=payload.requisition,
+        retention_override=payload.retention_override,
         # no persisted approval flow yet — this endpoint only previews the
         # route, so approvals are assumed for now.
         qc_approved=True,

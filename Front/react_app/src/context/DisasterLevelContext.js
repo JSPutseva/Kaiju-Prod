@@ -1,7 +1,7 @@
 import { createContext, useContext, useEffect, useRef, useState } from "react";
 import { LEVEL_SOUNDS } from "../data/levelSounds";
 
-// prototype mock — swap for the real disaster-level backend later
+// matches the rules PDF's catastrophe-level names
 export const LEVELS = [
   { level: 1, name: "Watch" },
   { level: 2, name: "Alert" },
@@ -9,6 +9,8 @@ export const LEVELS = [
   { level: 4, name: "Critical" },
   { level: 5, name: "Catastrophic" },
 ];
+
+export const LEVEL_NAMES = Object.fromEntries(LEVELS.map((l) => [l.level, l.name]));
 
 const DisasterLevelContext = createContext(null);
 

@@ -93,8 +93,13 @@ CREATE TABLE requests (
     destination_quarter_id INTEGER NOT NULL REFERENCES quarters(id) ON DELETE RESTRICT,
     resource_type_id INTEGER NOT NULL REFERENCES resource_types(id) ON DELETE RESTRICT,
     quantity INTEGER NOT NULL CHECK (quantity > 0),
+    requisition BOOLEAN NOT NULL DEFAULT FALSE,
+    route_type VARCHAR(20),
+    transit_via_id INTEGER REFERENCES quarters(id) ON DELETE SET NULL,
     status request_status NOT NULL DEFAULT 'PENDING',
     rejection_reason TEXT,
+    decided_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    decided_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     CHECK (source_quarter_id <> destination_quarter_id)
@@ -130,6 +135,14 @@ CREATE TABLE transfers (
         OR departure_at IS NULL
         OR delivered_at >= departure_at
     )
+);
+
+CREATE TABLE disaster_level_events (
+    id SERIAL PRIMARY KEY,
+    quarter_id INTEGER NOT NULL REFERENCES quarters(id) ON DELETE CASCADE,
+    level SMALLINT NOT NULL CHECK (level BETWEEN 1 AND 5),
+    changed_by_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
 -- Initial quarters
@@ -197,3 +210,6 @@ CREATE INDEX idx_connections_from
 
 CREATE INDEX idx_connections_to
     ON quarter_connections(to_quarter_id);
+
+CREATE INDEX idx_disaster_level_events_created_at
+    ON disaster_level_events(created_at);
